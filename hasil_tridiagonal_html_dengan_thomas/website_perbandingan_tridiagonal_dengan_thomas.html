@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tridiagonal Solver Comparison</title>
+  <style>
+    :root {
+      --bg: #f6efe6;
+      --panel: rgba(255, 252, 247, 0.95);
+      --ink: #172031;
+      --muted: #5b6474;
+      --line: rgba(23, 32, 49, 0.12);
+      --shadow: 0 20px 50px rgba(23, 32, 49, 0.14);
+      --radius: 24px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(37, 99, 235, 0.18), transparent 24%),
+        radial-gradient(circle at top right, rgba(45, 212, 191, 0.18), transparent 25%),
+        linear-gradient(180deg, #fffdf8 0%, var(--bg) 100%);
+    }
+    .page {
+      width: min(1520px, calc(100vw - 28px));
+      margin: 20px auto 40px;
+    }
+    .hero {
+      padding: 34px;
+      border-radius: 32px;
+      color: white;
+      background:
+        linear-gradient(145deg, rgba(23, 32, 49, 0.96), rgba(37, 99, 235, 0.90)),
+        linear-gradient(120deg, #172031, #2563eb);
+      box-shadow: var(--shadow);
+    }
+    .eyebrow {
+      display: inline-flex;
+      padding: 8px 14px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.12);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    h1 {
+      margin: 18px 0 10px;
+      font-size: clamp(34px, 5vw, 60px);
+      line-height: 0.95;
+      max-width: 980px;
+    }
+    .hero p {
+      margin: 0;
+      max-width: 920px;
+      color: rgba(255, 255, 255, 0.84);
+      line-height: 1.7;
+      font-size: 17px;
+    }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 18px;
+    }
+    .legend-chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: var(--legend-soft);
+      color: var(--legend-ink);
+      font-weight: 700;
+      font-size: 13px;
+    }
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 18px;
+      margin-top: 22px;
+    }
+    .summary-card {
+      padding: 20px;
+      border-radius: 22px;
+      background: var(--panel);
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      box-shadow: var(--shadow);
+    }
+    .summary-title {
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 12px;
+    }
+    .summary-value {
+      margin-top: 10px;
+      font-size: 28px;
+      font-weight: 700;
+    }
+    .summary-subtext {
+      margin-top: 8px;
+      color: var(--muted);
+      line-height: 1.6;
+      font-size: 14px;
+    }
+    .panel {
+      margin-top: 24px;
+      padding: 24px;
+      border-radius: var(--radius);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow);
+    }
+    .panel h2 {
+      margin: 0 0 8px;
+      font-size: 30px;
+    }
+    .panel p {
+      margin: 0 0 18px;
+      color: var(--muted);
+      line-height: 1.68;
+    }
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: white;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 1420px;
+    }
+    th, td {
+      padding: 14px 12px;
+      border-bottom: 1px solid rgba(23, 32, 49, 0.08);
+      vertical-align: top;
+      text-align: left;
+    }
+    th {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      background: rgba(246, 239, 230, 0.7);
+    }
+    tr:last-child td {
+      border-bottom: none;
+    }
+    .size-pill {
+      display: inline-flex;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(23, 32, 49, 0.08);
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .metric-card {
+      display: grid;
+      gap: 6px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      background: var(--metric-soft, rgba(23, 32, 49, 0.05));
+      border: 1px solid rgba(23, 32, 49, 0.08);
+    }
+    .metric-card strong {
+      font-size: 18px;
+      color: var(--metric-ink, var(--ink));
+    }
+    .metric-card span {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .metric-card.compact strong {
+      font-size: 15px;
+    }
+    .skip-card {
+      display: grid;
+      gap: 6px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      background: rgba(148, 163, 184, 0.12);
+      border: 1px dashed rgba(100, 116, 139, 0.4);
+    }
+    .skip-card strong {
+      font-size: 14px;
+      color: #475569;
+    }
+    .skip-card span {
+      color: #64748b;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .skip-card.compact {
+      min-height: 74px;
+      place-content: center;
+    }
+    .footnote {
+      margin-top: 18px;
+      color: var(--muted);
+      line-height: 1.68;
+      font-size: 14px;
+    }
+    @media (max-width: 1160px) {
+      .summary-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+    @media (max-width: 720px) {
+      .page {
+        width: min(100vw - 16px, 100%);
+        margin: 8px auto 20px;
+      }
+      .hero, .panel {
+        padding: 18px;
+      }
+      .summary-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <span class="eyebrow">Tridiagonal Dataset Comparison</span>
+      <h1>Thomas Algorithm vs Block LU and Dense LU Variants</h1>
+      <p>Benchmark ini memakai sistem tridiagonal yang identik dengan folder <code>Ukuran N x N</code>: diagonal utama 4, diagonal atas dan bawah -1. Thomas algorithm diukur sebagai solver struktur-khusus dengan storage kompak, sementara Block LU, Doolittle, dan Gaussian elimination tetap memakai representasi dense. Jadi perbandingan ini sengaja menunjukkan dua hal sekaligus: baseline terbaik untuk matriks tridiagonal, dan seberapa mahal jika struktur itu diabaikan.</p>
+      <div class="legend"><span class="legend-chip" style="--legend-ink:#2563eb; --legend-soft:rgba(59, 130, 246, 0.18);">Thomas Algorithm</span><span class="legend-chip" style="--legend-ink:#b45309; --legend-soft:rgba(245, 158, 11, 0.18);">Block LU CPU</span><span class="legend-chip" style="--legend-ink:#0f766e; --legend-soft:rgba(45, 212, 191, 0.18);">Block LU GPU</span><span class="legend-chip" style="--legend-ink:#7c3aed; --legend-soft:rgba(168, 85, 247, 0.18);">LU Doolittle</span><span class="legend-chip" style="--legend-ink:#166534; --legend-soft:rgba(34, 197, 94, 0.18);">LU Gaussian Elimination</span></div>
+    </section>
+
+    <section class="summary-grid"><article class="summary-card"><div class="summary-title">Overall Fastest</div><div class="summary-value">Thomas Algorithm</div><div class="summary-subtext">1024 x 1024 in 0.010s.</div></article><article class="summary-card"><div class="summary-title">Best Dense Method</div><div class="summary-value">Block LU GPU</div><div class="summary-subtext">1024 x 1024 in 0.052s.</div></article><article class="summary-card"><div class="summary-title">8192 Thomas Advantage</div><div class="summary-value">40.43x faster</div><div class="summary-subtext">Perbandingan terhadap metode dense tercepat yang masih bisa dibench pada ukuran 8192.</div></article><article class="summary-card"><div class="summary-title">Coverage</div><div class="summary-value">Thomas measured to 65536</div><div class="summary-subtext">Dense methods tetap dibatasi karena mereka mematerialisasi matriks penuh, bukan storage pita tridiagonal.</div></article></section>
+
+    <section class="panel">
+      <h2>Runtime Comparison</h2>
+      <p>Angka utama memakai median runtime untuk ukuran yang diulang lebih dari sekali. Thomas algorithm tetap diukur sampai 65536 karena kompleksitasnya linear. Metode dense ditandai <em>Skipped</em> saat biaya komputasi dan memori sudah tidak proporsional.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Ukuran</th>
+              <th>Thomas Algorithm</th>
+              <th>Block LU CPU</th>
+              <th>Block LU GPU</th>
+              <th>LU Doolittle</th>
+              <th>LU Gaussian Elimination</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><span class="size-pill">1024 x 1024</span></td><td><div class="metric-card" style="--metric-ink:#2563eb; --metric-soft:rgba(59, 130, 246, 0.18);"><strong>0.010s</strong><span>0.00% avg CPU</span><span>tridiagonal compact</span></div></td><td><div class="metric-card" style="--metric-ink:#b45309; --metric-soft:rgba(245, 158, 11, 0.18);"><strong>0.115s</strong><span>18.39% avg CPU</span><span>block size 16</span></div></td><td><div class="metric-card" style="--metric-ink:#0f766e; --metric-soft:rgba(45, 212, 191, 0.18);"><strong>0.052s</strong><span>2.21% avg CPU</span><span>block size 32</span><span>44.00% peak GPU</span></div></td><td><div class="metric-card" style="--metric-ink:#7c3aed; --metric-soft:rgba(168, 85, 247, 0.18);"><strong>3.192s</strong><span>6.14% avg CPU</span><span>dense</span></div></td><td><div class="metric-card" style="--metric-ink:#166534; --metric-soft:rgba(34, 197, 94, 0.18);"><strong>1.060s</strong><span>6.01% avg CPU</span><span>dense</span></div></td></tr><tr><td><span class="size-pill">2048 x 2048</span></td><td><div class="metric-card" style="--metric-ink:#2563eb; --metric-soft:rgba(59, 130, 246, 0.18);"><strong>0.019s</strong><span>1.35% avg CPU</span><span>tridiagonal compact</span></div></td><td><div class="metric-card" style="--metric-ink:#b45309; --metric-soft:rgba(245, 158, 11, 0.18);"><strong>0.435s</strong><span>32.63% avg CPU</span><span>block size 32</span></div></td><td><div class="metric-card" style="--metric-ink:#0f766e; --metric-soft:rgba(45, 212, 191, 0.18);"><strong>0.129s</strong><span>4.17% avg CPU</span><span>block size 64</span><span>65.00% peak GPU</span></div></td><td><div class="metric-card" style="--metric-ink:#7c3aed; --metric-soft:rgba(168, 85, 247, 0.18);"><strong>23.191s</strong><span>6.23% avg CPU</span><span>dense</span></div></td><td><div class="metric-card" style="--metric-ink:#166534; --metric-soft:rgba(34, 197, 94, 0.18);"><strong>8.938s</strong><span>6.21% avg CPU</span><span>dense</span></div></td></tr><tr><td><span class="size-pill">4096 x 4096</span></td><td><div class="metric-card" style="--metric-ink:#2563eb; --metric-soft:rgba(59, 130, 246, 0.18);"><strong>0.038s</strong><span>2.67% avg CPU</span><span>tridiagonal compact</span></div></td><td><div class="metric-card" style="--metric-ink:#b45309; --metric-soft:rgba(245, 158, 11, 0.18);"><strong>3.053s</strong><span>31.93% avg CPU</span><span>block size 32</span></div></td><td><div class="metric-card" style="--metric-ink:#0f766e; --metric-soft:rgba(45, 212, 191, 0.18);"><strong>0.533s</strong><span>6.24% avg CPU</span><span>block size 64</span><span>84.00% peak GPU</span></div></td><td><div class="skip-card"><strong>Skipped</strong><span>Skipped: dense classical LU becomes too slow past this size.</span></div></td><td><div class="metric-card" style="--metric-ink:#166534; --metric-soft:rgba(34, 197, 94, 0.18);"><strong>1m 12.7s</strong><span>6.26% avg CPU</span><span>dense</span></div></td></tr><tr><td><span class="size-pill">8192 x 8192</span></td><td><div class="metric-card" style="--metric-ink:#2563eb; --metric-soft:rgba(59, 130, 246, 0.18);"><strong>0.075s</strong><span>6.41% avg CPU</span><span>tridiagonal compact</span></div></td><td><div class="metric-card" style="--metric-ink:#b45309; --metric-soft:rgba(245, 158, 11, 0.18);"><strong>23.690s</strong><span>40.44% avg CPU</span><span>block size 32</span></div></td><td><div class="metric-card" style="--metric-ink:#0f766e; --metric-soft:rgba(45, 212, 191, 0.18);"><strong>3.033s</strong><span>6.58% avg CPU</span><span>block size 64</span><span>97.00% peak GPU</span></div></td><td><div class="skip-card"><strong>Skipped</strong><span>Skipped: dense classical LU becomes too slow past this size.</span></div></td><td><div class="skip-card"><strong>Skipped</strong><span>Skipped: dense classical LU becomes too slow past this size.</span></div></td></tr><tr><td><span class="size-pill">16384 x 16384</span></td><td><div class="metric-card" style="--metric-ink:#2563eb; --metric-soft:rgba(59, 130, 246, 0.18);"><strong>0.151s</strong><span>4.60% avg CPU</span><span>tridiagonal compact</span></div></td><td><div class="skip-card"><strong>Skipped</strong><span>Skipped: dense block path above this size would exceed practical RAM or benchmark time.</span></div></td><td><div class="skip-card"><strong>Skipped</strong><span>Skipped: dense block path above this size would exceed practical RAM or benchmark time.</span></div></td><td><div class="skip-card"><strong>Skipped</strong><span>Skipped: dense classical LU becomes too slow past this size.</span></div></td><td><div class="skip-card"><strong>Skipped</strong><span>Skipped: dense classical LU becomes too slow past this size.</span></div></td></tr><tr><td><span class="size-pill">32768 x 32768</span></td><td><div class="metric-card" style="--metric-ink:#2563eb; --metric-soft:rgba(59, 130, 246, 0.18);"><strong>0.305s</strong><span>5.37% avg CPU</span><span>tridiagonal compact</span></div></td><td><div class="skip-card"><strong>Skipped</strong><span>Skipped: dense block path above this size would exceed practical RAM or benchmark time.</span></div></td><td><div class="skip-card"><strong>Skipped</strong><span>Skipped: dense block path above this size would exceed practical RAM or benchmark time.</span></div></td><td><div class="skip-card"><strong>Skipped</strong><span>Skipped: dense classical LU becomes too slow past this size.</span></div></td><td><div class="skip-card"><strong>Skipped</strong><span>Skipped: dense classical LU becomes too slow past this size.</span></div></td></tr><tr><td><span class="size-pill">65536 x 65536</span></td><td><div class="metric-card" style="--metric-ink:#2563eb; --metric-soft:rgba(59, 130, 246, 0.18);"><strong>0.602s</strong><span>6.01% avg CPU</span><span>tridiagonal compact</span></div></td><td><div class="skip-card"><strong>Skipped</strong><span>Skipped: dense block path above this size would exceed practical RAM or benchmark time.</span></div></td><td><div class="skip-card"><strong>Skipped</strong><span>Skipped: dense block path above this size would exceed practical RAM or benchmark time.</span></div></td><td><div class="skip-card"><strong>Skipped</strong><span>Skipped: dense classical LU becomes too slow past this size.</span></div></td><td><div class="skip-card"><strong>Skipped</strong><span>Skipped: dense classical LU becomes too slow past this size.</span></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Accuracy Snapshot</h2>
+      <p>Setiap sel menampilkan <code>||LU - A||inf / ||A||inf</code> pada baris pertama, lalu relative error solusi <code>x_b</code> dan <code>x_c</code> terhadap solusi exact. Untuk Thomas, faktor LU dihitung dalam bentuk pita tridiagonal, bukan matriks penuh.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Ukuran</th>
+              <th>Thomas Algorithm</th>
+              <th>Block LU CPU</th>
+              <th>Block LU GPU</th>
+              <th>LU Doolittle</th>
+              <th>LU Gaussian Elimination</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><span class="size-pill">1024 x 1024</span></td><td><div class="metric-card compact"><strong>1.850e-17</strong><span>x_b 1.110e-16</span><span>x_c 1.110e-16</span></div></td><td><div class="metric-card compact"><strong>1.850e-17</strong><span>x_b 1.110e-16</span><span>x_c 1.110e-16</span></div></td><td><div class="metric-card compact"><strong>1.850e-17</strong><span>x_b 2.220e-16</span><span>x_c 1.110e-16</span></div></td><td><div class="metric-card compact"><strong>1.850e-17</strong><span>x_b 1.110e-16</span><span>x_c 1.110e-16</span></div></td><td><div class="metric-card compact"><strong>1.850e-17</strong><span>x_b 1.110e-16</span><span>x_c 1.110e-16</span></div></td></tr><tr><td><span class="size-pill">2048 x 2048</span></td><td><div class="metric-card compact"><strong>1.850e-17</strong><span>x_b 1.110e-16</span><span>x_c 1.110e-16</span></div></td><td><div class="metric-card compact"><strong>1.850e-17</strong><span>x_b 1.110e-16</span><span>x_c 1.110e-16</span></div></td><td><div class="metric-card compact"><strong>1.850e-17</strong><span>x_b 2.220e-16</span><span>x_c 1.110e-16</span></div></td><td><div class="metric-card compact"><strong>1.850e-17</strong><span>x_b 1.110e-16</span><span>x_c 1.110e-16</span></div></td><td><div class="metric-card compact"><strong>1.850e-17</strong><span>x_b 1.110e-16</span><span>x_c 1.110e-16</span></div></td></tr><tr><td><span class="size-pill">4096 x 4096</span></td><td><div class="metric-card compact"><strong>1.850e-17</strong><span>x_b 1.110e-16</span><span>x_c 1.110e-16</span></div></td><td><div class="metric-card compact"><strong>1.850e-17</strong><span>x_b 1.110e-16</span><span>x_c 1.110e-16</span></div></td><td><div class="metric-card compact"><strong>1.850e-17</strong><span>x_b 2.220e-16</span><span>x_c 1.110e-16</span></div></td><td><div class="skip-card compact"><strong>Skipped</strong></div></td><td><div class="metric-card compact"><strong>1.850e-17</strong><span>x_b 1.110e-16</span><span>x_c 1.110e-16</span></div></td></tr><tr><td><span class="size-pill">8192 x 8192</span></td><td><div class="metric-card compact"><strong>1.850e-17</strong><span>x_b 1.110e-16</span><span>x_c 1.110e-16</span></div></td><td><div class="metric-card compact"><strong>1.850e-17</strong><span>x_b 1.110e-16</span><span>x_c 1.110e-16</span></div></td><td><div class="metric-card compact"><strong>1.850e-17</strong><span>x_b 2.220e-16</span><span>x_c 1.110e-16</span></div></td><td><div class="skip-card compact"><strong>Skipped</strong></div></td><td><div class="skip-card compact"><strong>Skipped</strong></div></td></tr><tr><td><span class="size-pill">16384 x 16384</span></td><td><div class="metric-card compact"><strong>1.850e-17</strong><span>x_b 1.110e-16</span><span>x_c 1.110e-16</span></div></td><td><div class="skip-card compact"><strong>Skipped</strong></div></td><td><div class="skip-card compact"><strong>Skipped</strong></div></td><td><div class="skip-card compact"><strong>Skipped</strong></div></td><td><div class="skip-card compact"><strong>Skipped</strong></div></td></tr><tr><td><span class="size-pill">32768 x 32768</span></td><td><div class="metric-card compact"><strong>1.850e-17</strong><span>x_b 1.110e-16</span><span>x_c 1.110e-16</span></div></td><td><div class="skip-card compact"><strong>Skipped</strong></div></td><td><div class="skip-card compact"><strong>Skipped</strong></div></td><td><div class="skip-card compact"><strong>Skipped</strong></div></td><td><div class="skip-card compact"><strong>Skipped</strong></div></td></tr><tr><td><span class="size-pill">65536 x 65536</span></td><td><div class="metric-card compact"><strong>1.850e-17</strong><span>x_b 1.110e-16</span><span>x_c 1.110e-16</span></div></td><td><div class="skip-card compact"><strong>Skipped</strong></div></td><td><div class="skip-card compact"><strong>Skipped</strong></div></td><td><div class="skip-card compact"><strong>Skipped</strong></div></td><td><div class="skip-card compact"><strong>Skipped</strong></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Coverage and Interpretation</h2>
+      <p>Thomas algorithm memang tidak apples-to-apples dengan LU dense umum, karena dia memanfaatkan struktur tridiagonal secara langsung. Justru itu poin pembandingnya: kalau matriks Anda benar-benar tridiagonal, Thomas adalah baseline yang seharusnya dikalahkan oleh metode umum hanya jika ada alasan khusus, misalnya kebutuhan GPU atau generalitas struktur.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Ukuran</th>
+              <th>Status per metode</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><span class="size-pill">1024 x 1024</span></td><td>Thomas Algorithm: measured, median 0.010s.<br>Block LU CPU: measured, median 0.115s.<br>Block LU GPU: measured, median 0.052s.<br>LU Doolittle: measured, median 3.192s.<br>LU Gaussian Elimination: measured, median 1.060s.</td></tr><tr><td><span class="size-pill">2048 x 2048</span></td><td>Thomas Algorithm: measured, median 0.019s.<br>Block LU CPU: measured, median 0.435s.<br>Block LU GPU: measured, median 0.129s.<br>LU Doolittle: measured, median 23.191s.<br>LU Gaussian Elimination: measured, median 8.938s.</td></tr><tr><td><span class="size-pill">4096 x 4096</span></td><td>Thomas Algorithm: measured, median 0.038s.<br>Block LU CPU: measured, median 3.053s.<br>Block LU GPU: measured, median 0.533s.<br>LU Doolittle: Skipped: dense classical LU becomes too slow past this size.<br>LU Gaussian Elimination: measured, median 1m 12.7s.</td></tr><tr><td><span class="size-pill">8192 x 8192</span></td><td>Thomas Algorithm: measured, median 0.075s.<br>Block LU CPU: measured, median 23.690s.<br>Block LU GPU: measured, median 3.033s.<br>LU Doolittle: Skipped: dense classical LU becomes too slow past this size.<br>LU Gaussian Elimination: Skipped: dense classical LU becomes too slow past this size.</td></tr><tr><td><span class="size-pill">16384 x 16384</span></td><td>Thomas Algorithm: measured, median 0.151s.<br>Block LU CPU: Skipped: dense block path above this size would exceed practical RAM or benchmark time.<br>Block LU GPU: Skipped: dense block path above this size would exceed practical RAM or benchmark time.<br>LU Doolittle: Skipped: dense classical LU becomes too slow past this size.<br>LU Gaussian Elimination: Skipped: dense classical LU becomes too slow past this size.</td></tr><tr><td><span class="size-pill">32768 x 32768</span></td><td>Thomas Algorithm: measured, median 0.305s.<br>Block LU CPU: Skipped: dense block path above this size would exceed practical RAM or benchmark time.<br>Block LU GPU: Skipped: dense block path above this size would exceed practical RAM or benchmark time.<br>LU Doolittle: Skipped: dense classical LU becomes too slow past this size.<br>LU Gaussian Elimination: Skipped: dense classical LU becomes too slow past this size.</td></tr><tr><td><span class="size-pill">65536 x 65536</span></td><td>Thomas Algorithm: measured, median 0.602s.<br>Block LU CPU: Skipped: dense block path above this size would exceed practical RAM or benchmark time.<br>Block LU GPU: Skipped: dense block path above this size would exceed practical RAM or benchmark time.<br>LU Doolittle: Skipped: dense classical LU becomes too slow past this size.<br>LU Gaussian Elimination: Skipped: dense classical LU becomes too slow past this size.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="footnote">
+        Summary CSV: <code>hasil_tridiagonal_html_dengan_thomas\ringkasan.csv</code><br>
+        Policy: benchmark hanya menghitung factorization + solve <code>x_b</code> + solve <code>x_c</code>. I/O CSV tidak ikut dihitung. Dense methods tetap membangun matriks penuh di memori, sedangkan Thomas bekerja dengan tiga diagonal saja.
+      </div>
+    </section>
+  </main>
+</body>
+</html>
