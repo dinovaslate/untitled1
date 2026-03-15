@@ -24,27 +24,56 @@ For a general banded system, Block LU is still a reasonable fallback because it 
 
 For a special banded system such as the tridiagonal matrices used in the benchmark, Thomas algorithm is the right tool. It works directly on compact 1D bands, which is why its runtime and memory footprint are much smaller than Block LU on the same structured input.
 
-## Visual Summary
+## GitHub-Friendly Tables
 
-The screenshots below come from the comparison dashboards generated during the benchmark runs.
+The report and HTML dashboard contain the full discussion, but the tables below are the shortest GitHub-visible summary for the tridiagonal benchmark up to `512 x 512`.
 
-### Runtime Arena
+Important note: the memory numbers below use **peak algorithm memory**, not process RSS. In other words, they estimate the core arrays actually held by the method during factorization and solve, which is the right lens for comparing Thomas against dense Block LU.
 
-![Runtime Arena](assets/readme/runtime-arena.png)
+### Runtime and Algorithm Memory
 
-This view summarizes the median runtime for each method at each matrix size. The relative bars make it easy to see that Block LU CPU is competitive against the classical dense LU variants, while Block LU GPU only starts to become interesting near the larger tested sizes. On the tridiagonal side of the project, the same broader lesson holds: a general solver can still be respectable, but it will usually lose to a solver that fully exploits the matrix structure.
+| Size | Block LU backend | Block LU time (ms) | Thomas time (ms) | Block LU algo peak mem (MB) | Thomas algo peak mem (MB) |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 8 x 8 | CPU | 0.2944 | 0.0756 | 0.0028 | 0.0007 |
+| 16 x 16 | CPU | 0.6092 | 0.1500 | 0.0095 | 0.0014 |
+| 32 x 32 | CPU | 1.3113 | 0.2959 | 0.0347 | 0.0029 |
+| 128 x 128 | CPU | 4.8423 | 1.1687 | 0.5215 | 0.0117 |
+| 256 x 256 | CPU | 11.2256 | 2.3781 | 2.0430 | 0.0234 |
+| 512 x 512 | CPU + GPU | 21.5605 | 5.3477 | 14.2813 | 0.0468 |
 
-### Accuracy Check
+This is the clearest reason Thomas dominates on the tridiagonal benchmark: its runtime is lower, and its memory stays genuinely linear instead of inheriting the dense working-set cost of Block LU.
 
-![Accuracy Check](assets/readme/accuracy-check.png)
+### Accuracy Snapshot
 
-This table verifies that the comparison is not a speed-only story. Across the tested sizes, the LU reconstruction error and the `x_b` solution error remain very small, which shows that the methods are numerically consistent for these datasets. That matters because the performance conclusions would be much weaker if the faster method were achieving its speed by sacrificing accuracy.
+| Size | Block LU LU err | Thomas LU err | Block LU `x_b` err | Thomas `x_b` err |
+| --- | ---: | ---: | ---: | ---: |
+| 8 x 8 | 1.850e-17 | 1.850e-17 | 0.000e+00 | 0.000e+00 |
+| 16 x 16 | 1.850e-17 | 1.850e-17 | 1.110e-16 | 1.110e-16 |
+| 32 x 32 | 1.850e-17 | 1.850e-17 | 1.110e-16 | 1.110e-16 |
+| 128 x 128 | 1.850e-17 | 1.850e-17 | 1.110e-16 | 1.110e-16 |
+| 256 x 256 | 1.850e-17 | 1.850e-17 | 1.110e-16 | 1.110e-16 |
+| 512 x 512 | 1.850e-17 | 1.850e-17 | 2.220e-16 | 1.110e-16 |
+
+The important point is that the speedup is not coming from a numerical compromise. Thomas remains at the same very small error scale while being substantially cheaper.
 
 ### Resource Snapshot
 
-![Resource Snapshot](assets/readme/resource-snapshot.png)
+| Size | Block LU backend | Block LU CPU avg (%) | Thomas CPU avg (%) | Block LU GPU peak (%) | Thomas GPU peak (%) |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 8 x 8 | CPU | 6.39 | 5.67 | 0 | 0 |
+| 16 x 16 | CPU | 6.15 | 6.86 | 0 | 0 |
+| 32 x 32 | CPU | 6.32 | 6.23 | 0 | 0 |
+| 128 x 128 | CPU | 5.66 | 5.70 | 0 | 0 |
+| 256 x 256 | CPU | 5.26 | 5.08 | 0 | 0 |
+| 512 x 512 | CPU + GPU | 4.49 | 5.11 | 36 | 0 |
 
-This resource view gives context to the runtime numbers. It highlights the chosen CPU and GPU block sizes, GPU utilization, and peak memory across methods. The pattern is useful when interpreting the GPU path: even when GPU participation is visible, the tested problem sizes may still be too small to amortize device overhead, especially when compared with a highly structure-aware algorithm such as Thomas on tridiagonal systems.
+For the GPU-assisted Block LU path, device activity is visible at `512 x 512`, but the problem is still too small for that overhead to beat a compact tridiagonal solver.
+
+### Full Artifacts
+
+- HTML dashboard: [website_perbandingan_tridiagonal_dengan_thomas.html](hasil_tridiagonal_html_dengan_thomas/website_perbandingan_tridiagonal_dengan_thomas.html)
+- Summary CSV: [ringkasan.csv](hasil_tridiagonal_html_dengan_thomas/ringkasan.csv)
+- Latest report PDF: [laporan_algoritma_block_lu_thomas_professor_tone_final_v26.pdf](hasil_tridiagonal_html_dengan_thomas/laporan_algoritma_block_lu_thomas_professor_tone_final_v26.pdf)
 
 ## High-Level Findings
 
@@ -56,4 +85,4 @@ This resource view gives context to the runtime numbers. It highlights the chose
 ## Repository Notes
 
 - The repository contains generated experiment artifacts and report drafts produced during the study.
-- The benchmark screenshots in this README are stored in `assets/readme/` so that they render correctly on GitHub.
+- The tridiagonal benchmark tables in this README are mirrored by the generated HTML dashboard and summary CSV in `hasil_tridiagonal_html_dengan_thomas/`.

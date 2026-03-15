@@ -1,0 +1,491 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{caption}
+\usepackage{chngcntr}
+\usepackage{tabularx}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!50!black,
+  urlcolor=blue!50!black,
+  pdftitle={Block LU dan Thomas Algorithm untuk Sistem Linear Banded},
+  pdfauthor={}
+}
+
+\lstdefinestyle{pseudo}{
+  basicstyle=\ttfamily\small,
+  frame=single,
+  breaklines=true,
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false,
+  captionpos=b
+}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.45em}
+\renewcommand{\arraystretch}{1.12}
+\renewcommand{\contentsname}{Daftar Isi}
+\renewcommand{\lstlistingname}{Kode}
+\counterwithin{table}{section}
+\AtBeginDocument{\counterwithin{lstlisting}{section}}
+
+\title{Block LU dan Thomas Algorithm untuk Sistem Linear Banded}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section*{Rangkuman}
+Laporan ini membahas implementasi dan evaluasi dua pendekatan untuk menyelesaikan sistem persamaan linear banded, yaitu \textbf{Block LU Factorization} dan \textbf{Thomas algorithm}. Dari identifikasi struktur matriks input, diperoleh bahwa data asli mempunyai lower bandwidth $p=1$ dan upper bandwidth $q=2$, sehingga matriks memang berada pada kelas \emph{banded system}. Fakta ini penting karena pada kelas banded, pilihan algoritma seharusnya tidak lagi dipandang sebagai satu solusi tunggal untuk semua kasus, melainkan disesuaikan dengan struktur pita yang tersedia.
+
+Dalam kerangka ini, Block LU dipakai sebagai metode \emph{general-purpose} untuk \emph{banded system} yang belum cukup spesial untuk ditangani oleh solver compact seperti Thomas atau variasinya. Implementasi yang dipakai pada laporan ini tetap menyimpan matriks kerja dalam bentuk dense, tetapi organisasi blocked-nya menjaga locality komputasi lebih baik daripada LU non-blocked. Kebijakan backend yang dipakai adalah: untuk ukuran $n<512$, perhitungan dilakukan di CPU, sedangkan untuk $n\geq512$, operasi \emph{triangular solve} dan Schur complement dipindahkan ke GPU. Sebaliknya, Thomas algorithm dipakai untuk kasus tridiagonal, yaitu subkelas banded yang memang mempunyai struktur cukup spesifik untuk dieksploitasi langsung dengan array satu dimensi.
+
+Hasil eksperimen menunjukkan bahwa pada matriks tridiagonal sintetis berukuran sampai $512$, Thomas algorithm selalu lebih cepat daripada Block LU. Sebagai contoh, pada ukuran $512$, Block LU membutuhkan sekitar $21.5605$ ms, sedangkan Thomas algorithm hanya sekitar $5.3477$ ms. Analisis kompleksitas mendukung temuan ini: Block LU tetap memiliki biaya waktu orde $O(n^3)$ dan memori orde $O(n^2)$, sedangkan Thomas algorithm hanya membutuhkan waktu dan memori orde $O(n)$. Dari sisi akurasi, error Thomas algorithm tetap sangat kecil dan stabil pada seluruh ukuran yang diuji.
+
+Kesimpulan utamanya adalah bahwa pemilihan algoritma harus mengikuti struktur matriks. Untuk \emph{banded system} yang tidak mempunyai struktur cukup spesial untuk solver khusus, Block LU masih merupakan pendekatan umum yang masuk akal. Namun untuk \emph{banded system} spesial seperti matriks tridiagonal, algoritma yang sadar struktur seperti Thomas jauh lebih efisien tanpa mengorbankan akurasi.
+
+\tableofcontents
+\clearpage
+
+\section{Pendahuluan}
+Tujuan utama studi ini adalah membandingkan dua pendekatan penyelesaian sistem linear banded, yaitu Block LU dan Thomas algorithm, dengan memperhatikan tiga aspek utama: efisiensi penyimpanan, biaya komputasi, dan akurasi solusi. Motivasi studi ini muncul dari fakta bahwa matriks input sering kali mempunyai struktur pita yang bisa dikenali lebih awal. Bila struktur tersebut diketahui sejak awal, maka baik struktur data maupun algoritma penyelesaiannya seharusnya dapat dipilih secara lebih tepat.
+
+Dalam laporan ini, pembahasan dimulai dari identifikasi karakteristik matriks dan konsekuensinya terhadap penyimpanan. Setelah itu, dua algoritma yang digunakan dipaparkan, dimulai dari Block LU sebagai metode umum untuk \emph{banded system} yang tidak mempunyai solver spesifik yang sederhana, lalu dilanjutkan dengan Thomas algorithm sebagai metode khusus tridiagonal. Sesudah pembaca memiliki gambaran yang cukup tentang cara kerja algoritma, hasil eksperimen, analisis kompleksitas, serta analisis kondisi dan error dibahas secara bertahap.
+
+\section{Karakteristik Matriks dan Rancangan Algoritma}
+\subsection{Karakteristik Matriks dan Optimisasi Penyimpanan}
+Untuk setiap elemen tak nol $A_{ij}$, lower bandwidth dan upper bandwidth didefinisikan sebagai
+\[
+p=\max\{i-j \mid A_{ij}\neq 0\}, \qquad q=\max\{j-i \mid A_{ij}\neq 0\}.
+\]
+Dengan definisi ini, struktur pita matriks dapat dikenali langsung dari file CSV. Pada keenam matriks asli berukuran $8,16,32,128,256,512$, hasil identifikasinya konsisten: seluruh matriks memiliki \textbf{$p=1$} dan \textbf{$q=2$}. Artinya, matriks input merupakan \emph{banded matrix} yang sempit, sehingga pembahasan memang seharusnya berfokus pada keluarga \emph{banded system}, bukan pada matriks penuh tanpa struktur.
+
+\begin{lstlisting}[style=pseudo,caption={Grand plan pencarian lower bandwidth $p$ dan upper bandwidth $q$.},label={lst:bandwidth}]
+procedure FIND_BANDWIDTH(A, tau)
+    n <- size(A)
+    p <- 0
+    q <- 0
+
+    for i = 1 to n:
+        for j = 1 to n:
+            if abs(A[i,j]) <= tau:
+                continue
+            if i >= j:
+                p <- max(p, i-j)
+            else:
+                q <- max(q, j-i)
+
+    return p, q
+end procedure
+\end{lstlisting}
+
+Pada Kode~\ref{lst:bandwidth}, setiap elemen tak nol di bawah diagonal utama memberi kandidat nilai $i-j$ untuk $p$, sedangkan setiap elemen tak nol di atas diagonal utama memberi kandidat nilai $j-i$ untuk $q$. Nilai maksimum dari kedua selisih tersebut adalah bandwidth matriks.
+
+\begin{table}[h]
+\centering
+\caption{Perbandingan penyimpanan dense dengan jumlah elemen tak nol pada data asli.}
+\label{tab:bandwidth-storage}
+\begin{tabular}{rrrr}
+\toprule
+$N$ & Dense $n^2$ & Nonzero aktual & Rasio dense / nonzero \\
+\midrule
+8   & 64     & 28   & 2.29$\times$ \\
+16  & 256    & 60   & 4.27$\times$ \\
+32  & 1024   & 124  & 8.26$\times$ \\
+128 & 16384  & 508  & 32.25$\times$ \\
+256 & 65536  & 1020 & 64.25$\times$ \\
+512 & 262144 & 2044 & 128.25$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Tabel~\ref{tab:bandwidth-storage} memperlihatkan mengapa penyimpanan dense segera menjadi boros. Untuk ukuran $512\times512$, hanya $2044$ elemen yang tak nol, tetapi representasi dense tetap memaksa penyimpanan $262144$ elemen. Secara teoritis, representasi dense membutuhkan $O(n^2)$ ruang, sedangkan representasi banded hanya membutuhkan $O((p+q+1)n)$. Karena pada data ini $p$ dan $q$ konstan, kebutuhan ruangnya efektif menjadi \textbf{$O(n)$}.
+
+Untuk data asli dengan $p=1$ dan $q=2$, struktur compact yang paling alami adalah empat diagonal 1D: satu subdiagonal, satu diagonal utama, dan dua superdiagonal. Dalam eksperimen lanjutan juga dibangun kasus tridiagonal; pada kasus inilah Thomas algorithm menjadi relevan karena seluruh sistem dapat direpresentasikan dengan sejumlah kecil array 1D.
+
+\subsection{Rancangan Block LU}
+Block LU dipilih sebagai metode umum untuk \emph{banded system} yang tidak mempunyai struktur cukup spesial untuk solver compact seperti Thomas. Dalam implementasi laporan ini, matriks kerja memang masih disimpan dalam bentuk dense, tetapi bentuk blocked tetap lebih sesuai dengan perilaku mesin aktual daripada LU non-blocked yang bekerja terlalu halus pada elemen-elemen kecil. Pada Block LU, panel diagonal kecil cenderung tetap hangat di cache, sedangkan update mahal pada trailing matrix dipadatkan menjadi operasi blok besar. Konsekuensinya, reuse data membaik dan backend numerik dapat bekerja lebih efisien.
+
+Secara konseptual, matriks $A\in\mathbb{R}^{N\times N}$ dibagi menjadi
+\[
+A =
+\begin{bmatrix}
+A_{11} & A_{12} \\
+A_{21} & A_{22}
+\end{bmatrix},
+\]
+dengan
+\[
+A_{11}\in\mathbb{R}^{b\times b}, \qquad
+A_{12}\in\mathbb{R}^{b\times (N-b)}, \qquad
+A_{21}\in\mathbb{R}^{(N-b)\times b}, \qquad
+A_{22}\in\mathbb{R}^{(N-b)\times (N-b)}.
+\]
+Di sini $b$ adalah \emph{block size}. Setelah blok diagonal $A_{11}$ difaktorkan menjadi $L_{11}U_{11}$, blok kanan atas dan kiri bawah diselesaikan dengan \emph{triangular solve}, lalu trailing matrix $A_{22}$ diperbarui melalui Schur complement.
+
+\begin{lstlisting}[style=pseudo,caption={Grand plan panel LU in-place pada blok diagonal kecil.},label={lst:panel-lu}]
+procedure PANEL_LU_INPLACE(A)
+    n <- size(A)
+    if n <= 1:
+        return
+
+    pivot <- A[1,1]
+    m <- A[2:n,1] / pivot
+    A[2:n,1] <- m
+
+    A[2:n,2:n] <- A[2:n,2:n] - m outer A[1,2:n]
+    PANEL_LU_INPLACE(A[2:n,2:n])
+end procedure
+\end{lstlisting}
+
+Dalam implementasi aktual, bentuk pada Kode~\ref{lst:panel-lu} direalisasikan sebagai in-place Gaussian elimination iteratif pada panel diagonal. Baris yang paling penting adalah
+\[
+A_{2:n,\,2:n} \leftarrow A_{2:n,\,2:n} - m \otimes A_{1,\,2:n}.
+\]
+Jika $r=A_{1,\,2:n}$ adalah sisa baris pivot dan $m=A_{2:n,\,1}/A_{1,1}$ adalah vektor multiplier, maka $m\otimes r$ membentuk matriks yang baris ke-$i$-nya sama dengan $m_i r$. Karena itu, satu baris pivot digunakan untuk mengupdate seluruh baris sisanya sekaligus.
+
+\begin{lstlisting}[style=pseudo,caption={Grand plan Block LU utama.},label={lst:block-lu}]
+procedure BLOCK_LU(A, b)
+    n <- size(A)
+    if n <= b:
+        PANEL_LU_INPLACE(A)
+        return A
+
+    partition A into:
+        [ A11  A12 ]
+        [ A21  A22 ]
+    with A11 of size b x b
+         A12 of size b x (n-b)
+         A21 of size (n-b) x b
+         A22 of size (n-b) x (n-b)
+
+    PANEL_LU_INPLACE(A11)
+    define A11 = L11 * U11
+    with L11 unit lower triangular
+         U11 upper triangular
+
+    U12 <- solve_lower_triangular(L11, A12, unit_diagonal = true)
+    A12 <- U12
+    L21 <- transpose(
+             solve_lower_triangular(transpose(U11),
+                                    transpose(A21),
+                                    unit_diagonal = false)
+           )
+    A21 <- L21
+
+    A22 <- A22 - L21 * U12
+
+    BLOCK_LU(A22, b)
+    return A
+end procedure
+\end{lstlisting}
+
+Seperti halnya Kode~\ref{lst:panel-lu}, Kode~\ref{lst:block-lu} di atas akan diimplementasikan secara iteratif.
+
+Secara konseptual, Block LU tetap berjalan melalui empat fase utama berikut.
+\begin{enumerate}[leftmargin=1.5em]
+  \item Faktorisasi panel diagonal kecil dengan in-place Gaussian elimination.
+  \item Penyelesaian blok kanan atas $U_{12}$ dari sistem $L_{11}U_{12}=A_{12}$.
+  \item Penyelesaian blok kiri bawah $L_{21}$ dari sistem $L_{21}U_{11}=A_{21}$.
+  \item Pembentukan Schur complement $A_{22}\leftarrow A_{22}-L_{21}U_{12}$.
+\end{enumerate}
+
+Schur complement adalah update trailing matrix
+\[
+L_{21}U_{12} = \sum_{t=1}^{b} L_{21}(:,t)\,U_{12}(t,:),
+\]
+yakni penjumlahan $b$ buah \emph{outer product}; dengan kata lain, ia adalah versi blok dari update outer product pada in-place Gaussian elimination.
+
+Ukuran blok tidak diturunkan dari satu rumus universal, tetapi dipilih secara \textbf{heuristic}. Pendekatan ini sejalan dengan praktik LAPACK, khususnya fungsi \texttt{ILAENV}, yang memang mengembalikan parameter blok optimal secara \emph{machine-dependent}. Karena itu, implementasi ini memakai block size kecil pada CPU dan block size lebih besar pada GPU.
+
+Penyimpanan faktor dilakukan secara \textbf{in-place}. Karena diagonal matriks $L$ selalu bernilai satu, diagonal tersebut tidak perlu disimpan eksplisit. Akibatnya, bagian bawah diagonal utama dari salinan $A$ dipakai untuk multiplier $L$, sedangkan diagonal utama dan bagian atasnya dipakai untuk $U$.
+
+Untuk ukuran \texttt{n < 512}, seluruh jalur Block LU dikerjakan di CPU. Untuk ukuran \texttt{n >= 512}, panel diagonal kecil tetap difaktorkan di CPU, tetapi \emph{solve lower triangular}, \emph{solve upper triangular}, dan pembentukan Schur complement dipindahkan ke GPU.
+
+\subsection{Rancangan Thomas Algorithm}
+Untuk matriks tridiagonal digunakan \textbf{Thomas algorithm}, yaitu bentuk khusus eliminasi Gauss untuk pita tiga diagonal. Algoritma ini menggunakan lima array 1D: subdiagonal $a$, diagonal utama $b$, superdiagonal $c$, ruas kanan $d$, dan solusi $x$. Dalam bentuk faktorisasi eksplisit, array $a$ dapat dioverwrite menjadi multiplier $l$, sedangkan array $b$ dioverwrite menjadi diagonal baru $u$.
+
+\begin{lstlisting}[style=pseudo,caption={Grand plan Thomas algorithm.},label={lst:thomas}]
+procedure THOMAS(a, b, c, d)
+    for i = 1 to n-1:
+        l[i] <- a[i] / b[i]
+        b[i+1] <- b[i+1] - l[i] * c[i]
+        d[i+1] <- d[i+1] - l[i] * d[i]
+
+    x[n] <- d[n] / b[n]
+    for i = n-1 down to 1:
+        x[i] <- (d[i] - c[i] * x[i+1]) / b[i]
+
+    return x
+end procedure
+\end{lstlisting}
+
+Berbeda dari Block LU yang ditujukan sebagai metode umum untuk \emph{banded system} non-spesial dan pada implementasi ini masih bekerja dengan matriks kerja dense, Thomas langsung memanfaatkan struktur pita tiga diagonal. Karena itu, ia bukan sekadar versi yang lebih ringan, melainkan memang algoritma yang dirancang untuk subkelas matriks yang lebih spesifik.
+
+\section{Hasil Eksperimen}
+\subsection{Perbandingan Runtime dan Pemakaian Resource}
+Perbandingan eksperimen dibatasi pada ukuran sampai $512$. Kasus yang dipakai adalah matriks tridiagonal sintetis yang konsisten dengan Thomas algorithm. Pada Block LU diberlakukan kebijakan backend yang sama seperti implementasi utama: \textbf{CPU} untuk $n<512$ dan \textbf{CPU+GPU} untuk $n\geq512$.
+
+\begin{table}[h]
+\centering
+\caption{Perbandingan runtime dan peak memory inti algoritma antara Block LU dan Thomas algorithm.}
+\label{tab:runtime-memory}
+\resizebox{\textwidth}{!}{
+\begin{tabular}{rlrrrr}
+\toprule
+$N$ & Backend BLU & BLU time (ms) & Thomas time (ms) & BLU algo mem (MB) & Thomas algo mem (MB) \\
+\midrule
+8   & CPU     & 0.2944 & 0.0756 & 0.0028 & 0.0007 \\
+16  & CPU     & 0.6092 & 0.1500 & 0.0095 & 0.0014 \\
+32  & CPU     & 1.3113 & 0.2959 & 0.0347 & 0.0029 \\
+128 & CPU     & 4.8423 & 1.1687 & 0.5215 & 0.0117 \\
+256 & CPU     & 11.2256 & 2.3781 & 2.0430 & 0.0234 \\
+512 & CPU+GPU & 21.5605 & 5.3477 & 14.2813 & 0.0468 \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{Perbandingan CPU usage dan GPU usage antara Block LU dan Thomas algorithm.}
+\label{tab:cpu-gpu-usage}
+\resizebox{\textwidth}{!}{
+\begin{tabular}{rlrrrr}
+\toprule
+$N$ & Backend BLU & BLU CPU avg (\%) & Thomas CPU avg (\%) & BLU GPU peak (\%) & Thomas GPU peak (\%) \\
+\midrule
+8   & CPU     & 6.39 & 5.67 & 0  & 0 \\
+16  & CPU     & 6.15 & 6.86 & 0  & 0 \\
+32  & CPU     & 6.32 & 6.23 & 0  & 0 \\
+128 & CPU     & 5.66 & 5.70 & 0  & 0 \\
+256 & CPU     & 5.26 & 5.08 & 0  & 0 \\
+512 & CPU+GPU & 4.49 & 5.11 & 36 & 0 \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+Tabel~\ref{tab:runtime-memory} dan Tabel~\ref{tab:cpu-gpu-usage} menunjukkan pola yang tegas. Thomas selalu lebih cepat karena ia memang ditujukan untuk struktur tridiagonal compact, sedangkan Block LU di sini berperan sebagai metode yang lebih umum untuk \emph{banded system} dan masih membawa overhead representasi dense pada matriks kerja. Kolom memory pada Tabel~\ref{tab:runtime-memory} kini tidak lagi memakai RSS proses Python, melainkan estimasi \emph{peak core memory} dari struktur data utama yang benar-benar dipegang algoritma. Angka utilisasi CPU dan GPU tetap diperoleh dari \emph{batched profiling}, bukan dari satu eksekusi tunggal, agar durasi pengukuran cukup panjang untuk sampler.
+
+\section{Analisis Kompleksitas}
+\subsection{Block LU}
+\subsubsection*{Total FLOPs dan Time Complexity}
+Untuk membuat penghitungan FLOPS lebih transparan, misalkan $n = sb$ dengan $s$ banyaknya blok dan $b$ adalah block size. Pada iterasi blok ke-$j$, definisikan
+\[
+m_j = n - (j+1)b,
+\]
+yaitu ukuran sisi trailing matrix setelah panel ke-$j$ selesai diproses.
+
+\begin{table}[h]
+\centering
+\caption{Akumulasi FLOPS per fase pada Block LU.}
+\label{tab:blocklu-flops}
+\resizebox{\textwidth}{!}{
+\begin{tabular}{lll}
+\toprule
+Fase & FLOPS per iterasi ke-$j$ & Akumulasi sampai selesai \\
+\midrule
+Panel LU pada $A_{11}$ & $\dfrac{b(b-1)(4b+1)}{6}$ & $\dfrac{n(b-1)(4b+1)}{6}$ \\
+Hitung $U_{12}$ & $m_j\,b(b-1)$ & $\dfrac{n(n-b)(b-1)}{2}$ \\
+Hitung $L_{21}$ & $m_j\,b^2$ & $\dfrac{n(n-b)b}{2}$ \\
+Schur complement $A_{22}\leftarrow A_{22}-L_{21}U_{12}$ & $2m_j^2b$ & $\dfrac{n(n-b)(2n-b)}{3}$ \\
+\midrule
+Total & - & $\dfrac{n(b-1)(4b+1)}{6} + \dfrac{n(n-b)(2b-1)}{2} + \dfrac{n(n-b)(2n-b)}{3}$ \\
+Asimtotik & - & $O(n^3)$ \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+Tabel~\ref{tab:blocklu-flops} memperlihatkan bahwa biaya dominan Block LU datang dari pembentukan Schur complement. Secara asimtotik, Block LU mempunyai kompleksitas waktu
+\[
+T(n)=O(n^3).
+\]
+Leading-order flop count faktorisasinya tetap sekitar
+\[
+\frac{2}{3}n^3,
+\]
+dengan tambahan sekitar $2n^2$ flop untuk dua kali \emph{forward-back substitution} pada dua ruas kanan. Jadi, untuk satu faktorisasi dan dua solusi, total kerja aritmetiknya didominasi oleh
+\[
+\frac{2}{3}n^3 + 2n^2.
+\]
+
+\subsubsection*{Memory Complexity}
+Jika satu \emph{unit memory} dipahami sebagai satu bilangan floating-point, maka okupasi utama Block LU dapat diringkas sebagai berikut.
+
+\begin{table}[h]
+\centering
+\caption{Ocupancy memori per struktur data pada Block LU.}
+\label{tab:blocklu-memory}
+\begin{tabular}{ll}
+\toprule
+Struktur data & Okupasi (unit memory) \\
+\midrule
+Matriks kerja gabungan $A/LU$ & $n^2$ \\
+Blok sementara $L_{11}$ & $b^2$ \\
+Blok sementara $U_{11}$ & $b^2$ \\
+Blok sementara $U_{12}$ & $b(n-b)$ \\
+Blok sementara $L_{21}$ & $(n-b)b$ \\
+\midrule
+Total peak CPU path & $n^2 + 2b^2 + 2b(n-b)$ \\
+Asimtotik & $O(n^2)$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Tabel~\ref{tab:blocklu-memory} menunjukkan bahwa, walaupun ada beberapa blok sementara, seluruh okupasi tetap didominasi oleh satu matriks kerja dense besar berukuran $n^2$. Inilah biaya yang harus dibayar ketika Block LU dipakai sebagai pendekatan umum, bukan sebagai solver compact yang spesifik terhadap struktur pita tertentu.
+
+\subsection{Thomas Algorithm}
+\subsubsection*{Total FLOPs dan Time Complexity}
+Untuk Thomas algorithm, pemisahan per fase lebih sederhana karena algoritmanya memang hanya terdiri dari faktorisasi maju dan penyelesaian sistem segitiga. Karena pada eksperimen ini diselesaikan dua ruas kanan, maka fase solve dihitung dua kali.
+
+\begin{table}[h]
+\centering
+\caption{Akumulasi FLOPS per fase pada Thomas algorithm.}
+\label{tab:thomas-flops}
+\small
+\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}p{0.24\textwidth} >{\centering\arraybackslash}p{0.16\textwidth} >{\raggedright\arraybackslash}X}
+\toprule
+Fase & FLOPS & Keterangan \\
+\midrule
+Faktorisasi maju & $3(n-1)$ & 1 divisi + 1 perkalian + 1 pengurangan per langkah \\
+Solve untuk $x_b$ & $5n - 4$ & forward substitution + backward substitution \\
+Solve untuk $x_c$ & $5n - 4$ & forward substitution + backward substitution \\
+\midrule
+Total & $13n - 11$ & berasal dari $3(n-1) + (5n-4) + (5n-4)$ \\
+Asimtotik & $O(n)$ & \\
+\bottomrule
+\end{tabularx}
+\normalsize
+\end{table}
+
+Dari Tabel~\ref{tab:thomas-flops}, kompleksitas waktunya langsung terlihat:
+\[
+T(n)=O(n).
+\]
+Perbedaan terhadap Block LU bukan hanya pada konstanta, tetapi juga pada kelas kompleksitas waktunya.
+
+\subsubsection*{Memory Complexity}
+Thomas jauh lebih hemat karena tidak pernah membangun matriks dense penuh. Jika dihitung dalam satuan bilangan floating-point, okupasinya dapat dijelaskan per struktur data sebagai berikut.
+
+\begin{table}[h]
+\centering
+\caption{Occupancy memori per struktur data pada Thomas algorithm.}
+\label{tab:thomas-memory}
+\begin{tabular}{ll}
+\toprule
+Struktur data & Okupasi (unit memory) \\
+\midrule
+Subdiagonal / multipliers & $n-1$ \\
+Diagonal utama / $u$ diagonal & $n$ \\
+Superdiagonal & $n-1$ \\
+Buffer RHS / solusi saat ini & $n$ \\
+Buffer kerja maju-mundur & $n$ \\
+\midrule
+Total peak implementasi & $5n - 2$ \\
+Asimtotik & $O(n)$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Tabel~\ref{tab:thomas-memory} menunjukkan bahwa total okupasi Thomas tetap linear terhadap $n$. Jika implementasi dibuat lebih ketat dan beberapa buffer dioverwrite, konstanta ini masih bisa diperkecil, tetapi kesimpulan asimtotiknya tidak berubah.
+
+\subsection{Membaca Tren Running Time}
+Tren running time perlu dibaca bersama Tabel~\ref{tab:runtime-memory}. Untuk Block LU, waktu komputasi naik dari $0.2944$ ms pada ukuran $8$ menjadi $21.5605$ ms pada ukuran $512$. Kenaikan ini jauh lebih tajam daripada linear dan konsisten dengan biaya komputasi metode umum yang dalam implementasi ini masih ditopang oleh matriks kerja dense dan orde kubik. Sebaliknya, Thomas naik dari $0.0756$ ms menjadi $5.3477$ ms pada rentang ukuran yang sama, yang jauh lebih landai dan selaras dengan kompleksitas linear.
+
+Tabel eksperimen juga memperlihatkan detail implementasi. Sampai ukuran $256$, Block LU masih berjalan di CPU dan waktu meningkat bertahap. Pada ukuran $512$, backend berpindah ke CPU+GPU dan GPU mulai terlibat, tetapi ukuran masalah masih terlalu kecil untuk menutup overhead pendekatan umum yang masih memakai matriks kerja dense serta koordinasi device. Karena itu, Thomas tetap lebih cepat pada seluruh ukuran yang diuji.
+
+\section{Analisis Kondisi dan Error}
+Untuk \emph{conditioning number}, digunakan tiga norma standar:
+\[
+\kappa_1(A)=\|A\|_1\|A^{-1}\|_1,\qquad
+\kappa_2(A)=\|A\|_2\|A^{-1}\|_2,\qquad
+\kappa_\infty(A)=\|A\|_\infty\|A^{-1}\|_\infty.
+\]
+Ketiga ukuran ini memisahkan dua hal yang sering bercampur dalam diskusi implementasi: performa algoritma dan sensitivitas numerik matriks itu sendiri.
+
+\begin{table}[h]
+\centering
+\caption{Condition number data asli berukuran $8$ sampai $512$.}
+\label{tab:condition-number}
+\begin{tabular}{rrrrl}
+\toprule
+$N$ & $\kappa_1(A)$ & $\kappa_2(A)$ & $\kappa_\infty(A)$ & Interpretasi \\
+\midrule
+8   & $1.12\times 10^2$  & $8.11\times 10^1$  & $1.91\times 10^2$  & baik \\
+16  & $7.10\times 10^1$  & $3.02\times 10^1$  & $7.88\times 10^1$  & baik \\
+32  & $1.52\times 10^2$  & $8.34\times 10^1$  & $3.56\times 10^2$  & baik \\
+128 & $1.06\times 10^6$  & $4.06\times 10^5$  & $2.48\times 10^6$  & mulai sensitif \\
+256 & $1.13\times 10^{20}$ & $3.18\times 10^{19}$ & $3.38\times 10^{19}$ & ill-conditioned \\
+512 & $7.84\times 10^4$  & $2.65\times 10^4$  & $1.01\times 10^5$  & moderat \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Tabel~\ref{tab:condition-number} memperlihatkan bahwa sebagian besar sistem masih berada pada tingkat conditioning yang masuk akal, kecuali ukuran $256$ yang jelas \emph{ill-conditioned}. Untuk bagian error, laporan ini memakai Thomas algorithm, karena algoritma itulah yang secara struktural memang ditujukan untuk matriks tridiagonal yang dipakai pada eksperimen perbandingan hingga ukuran $512$.
+
+\begin{table}[h]
+\centering
+\caption{Error Thomas algorithm pada matriks tridiagonal sampai ukuran $512$.}
+\label{tab:thomas-error}
+\resizebox{\textwidth}{!}{
+\begin{tabular}{rrrrrr}
+\toprule
+$N$ & LU err & $x_b$ err & $x_c$ err & $r_b$ & $r_c$ \\
+\midrule
+8   & $1.85\times 10^{-17}$ & $0$                   & $1.11\times 10^{-16}$ & $0$                   & $4.87\times 10^{-17}$ \\
+16  & $1.85\times 10^{-17}$ & $1.11\times 10^{-16}$ & $1.11\times 10^{-16}$ & $4.93\times 10^{-17}$ & $4.90\times 10^{-17}$ \\
+32  & $1.85\times 10^{-17}$ & $1.11\times 10^{-16}$ & $1.11\times 10^{-16}$ & $4.93\times 10^{-17}$ & $4.92\times 10^{-17}$ \\
+128 & $1.85\times 10^{-17}$ & $1.11\times 10^{-16}$ & $1.11\times 10^{-16}$ & $4.93\times 10^{-17}$ & $4.93\times 10^{-17}$ \\
+256 & $1.85\times 10^{-17}$ & $1.11\times 10^{-16}$ & $1.11\times 10^{-16}$ & $4.93\times 10^{-17}$ & $4.93\times 10^{-17}$ \\
+512 & $1.85\times 10^{-17}$ & $1.11\times 10^{-16}$ & $1.11\times 10^{-16}$ & $4.93\times 10^{-17}$ & $4.93\times 10^{-17}$ \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+Di sini $r_b$ dan $r_c$ menyatakan residual ternormalisasi untuk dua ruas kanan. Tabel~\ref{tab:thomas-error} menunjukkan bahwa error Thomas tetap sangat kecil dan praktis stabil terhadap pertumbuhan ukuran hingga $512$. Hal ini selaras dengan sifat masalah tridiagonal yang dipakai pada eksperimen: struktur matriks cocok dengan algoritmanya, sehingga solusi yang dihasilkan tetap akurat sekaligus murah secara komputasi.
+
+\section{Kesimpulan}
+Studi ini menunjukkan bahwa struktur matriks harus menjadi pertimbangan utama dalam memilih representasi data dan algoritma penyelesaian. Dari identifikasi bandwidth pada data asli, terlihat bahwa matriks bersifat banded sempit dengan $p=1$ dan $q=2$, sehingga penyimpanan dense sebenarnya tidak ekonomis. Dalam konteks ini, Block LU sebaiknya dipahami sebagai metode umum untuk \emph{banded system} yang belum mempunyai solver spesifik yang sederhana, bukan sebagai pilihan pertama untuk setiap struktur pita. Keunggulannya terletak pada organisasi blocked yang lebih sadar cache dibanding LU non-blocked dan pada kemampuannya memanfaatkan GPU pada operasi tertentu.
+
+Eksperimen pada matriks tridiagonal sampai ukuran $512$ memperlihatkan bahwa Thomas algorithm selalu lebih cepat daripada Block LU. Analisis kompleksitas menjelaskan hasil ini secara langsung: Block LU tetap mempunyai biaya waktu orde $O(n^3)$ dan memori orde $O(n^2)$, sedangkan Thomas hanya memerlukan waktu dan memori orde $O(n)$. Dari sisi numerik, error Thomas juga tetap kecil dan stabil pada seluruh ukuran yang diuji. Dengan demikian, rekomendasi akhirnya jelas: untuk \emph{banded system} yang bersifat umum dan tidak mempunyai struktur khusus yang mudah dieksploitasi, Block LU masih layak dipakai; tetapi untuk \emph{banded system} spesial seperti matriks tridiagonal pada soal ini, gunakan algoritma compact seperti Thomas.
+
+\section*{Referensi}
+\begin{enumerate}[leftmargin=1.25em]
+  \item LAPACK Users' Guide, bagian \texttt{ILAENV}: \url{https://www.netlib.org/lapack/lug/node131.html}
+  \item LAPACK Users' Guide, faktorization untuk sistem linear: \url{https://www.netlib.org/lapack/lug/node68.html}
+  \item Sumber \texttt{DGETRF}: \url{https://www.netlib.org/lapack/explore-html/d3/d6a/dgetrf_8f_source.html}
+\end{enumerate}
+
+\appendix
+\section{Lampiran: Repositori dan Berkas Program}
+Seluruh kode yang digunakan dalam laporan ini tersedia pada repositori GitHub berikut:
+\begin{center}
+\url{https://github.com/dinovaslate/untitled1}
+\end{center}
+
+Berkas utama yang relevan terhadap laporan ini adalah sebagai berikut.
+\begin{enumerate}[leftmargin=1.5em]
+  \item \texttt{block\_lu\_cpu.py}, yang memuat implementasi Block LU pada CPU.
+  \item \texttt{block\_lu\_gpu.py}, yang memuat implementasi Block LU pada GPU.
+  \item \texttt{thomas\_algorithm.py}, yang memuat implementasi Thomas algorithm.
+  \item \texttt{benchmark\_tridiagonal\_html.py}, yang digunakan untuk eksperimen perbandingan pada matriks tridiagonal.
+\end{enumerate}
+
+Lampiran ini dicantumkan agar pembaca dapat menelusuri hubungan antara laporan dan implementasi program yang dipakai dalam eksperimen.
+
+\end{document}

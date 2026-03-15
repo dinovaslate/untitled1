@@ -43,6 +43,7 @@ from thomas_algorithm import (
 
 ALL_SIZES = [1024, 2048, 4096, 8192, 16384, 32768, 65536]
 PIVOT_TOL = 1e-12
+FLOAT64_BYTES = np.dtype(np.float64).itemsize
 
 
 @dataclass(frozen=True)
@@ -108,6 +109,43 @@ def x_true_c(size: int) -> np.ndarray:
     return np.arange(1, size + 1, dtype=np.float64)
 
 
+def bytes_to_mb(value: int | float | None) -> float | None:
+    if value is None:
+        return None
+    return float(value) / (1024.0 * 1024.0)
+
+
+def estimate_thomas_peak_memory_bytes(size: int) -> int:
+    # Core arrays held across factorization plus two sequential solves:
+    # lower, diagonal, upper, b, c, multipliers, u_diagonal, u_upper,
+    # retained x_b, and the active rhs/y/x workspace for the current solve.
+    peak_elements = 12 * size - 4
+    return int(peak_elements * FLOAT64_BYTES)
+
+
+def estimate_block_lu_cpu_peak_memory_bytes(size: int, block_size: int) -> int:
+    # Core host-side arrays:
+    # input dense matrix, combined LU buffer, explicit L, explicit U,
+    # panel temporaries (L11/U11/U12/L21), and lightweight solve vectors.
+    peak_elements = 4 * size * size + 2 * block_size * size + 6 * size
+    return int(peak_elements * FLOAT64_BYTES)
+
+
+def estimate_block_lu_gpu_peak_memory_bytes(size: int, block_size: int) -> int:
+    # Aggregate host + device core arrays for the current implementation:
+    # host input + host outputs (combined/L/U) + device combined/L/U,
+    # panel temporaries, and solve vectors.
+    peak_elements = 7 * size * size + 2 * block_size * size + 8 * size
+    return int(peak_elements * FLOAT64_BYTES)
+
+
+def estimate_dense_lu_peak_memory_bytes(size: int) -> int:
+    # Dense input, combined working buffer, explicit L, explicit U,
+    # and lightweight solve vectors.
+    peak_elements = 4 * size * size + 6 * size
+    return int(peak_elements * FLOAT64_BYTES)
+
+
 def execute_thomas(case: TridiagonalCase) -> dict:
     multipliers, u_diagonal, u_upper = factorize_tridiagonal(
         case.lower,
@@ -120,6 +158,7 @@ def execute_thomas(case: TridiagonalCase) -> dict:
     return {
         "block_size": None,
         "storage_model": "tridiagonal compact",
+        "algorithm_peak_memory_bytes": estimate_thomas_peak_memory_bytes(case.size),
         "lu_relative_error_inf": lu_relative_error_inf_tridiagonal(
             case.lower,
             case.diagonal,
@@ -144,6 +183,7 @@ def execute_block_lu_cpu(case: TridiagonalCase) -> dict:
     return {
         "block_size": block_size,
         "storage_model": "dense",
+        "algorithm_peak_memory_bytes": estimate_block_lu_cpu_peak_memory_bytes(case.size, block_size),
         "combined_lu": combined,
         "L": L,
         "U": U,
@@ -170,6 +210,7 @@ def execute_block_lu_gpu(case: TridiagonalCase) -> dict:
     return {
         "block_size": block_size,
         "storage_model": "dense",
+        "algorithm_peak_memory_bytes": estimate_block_lu_gpu_peak_memory_bytes(case.size, block_size),
         "combined_lu": cp.asnumpy(combined_gpu),
         "L": cp.asnumpy(L_gpu),
         "U": cp.asnumpy(U_gpu),
@@ -188,6 +229,7 @@ def execute_doolittle(case: TridiagonalCase) -> dict:
     return {
         "block_size": None,
         "storage_model": "dense",
+        "algorithm_peak_memory_bytes": estimate_dense_lu_peak_memory_bytes(case.size),
         "combined_lu": combined,
         "L": L,
         "U": U,
@@ -210,6 +252,7 @@ def execute_gaussian(case: TridiagonalCase) -> dict:
     return {
         "block_size": None,
         "storage_model": "dense",
+        "algorithm_peak_memory_bytes": estimate_dense_lu_peak_memory_bytes(case.size),
         "combined_lu": combined,
         "L": L,
         "U": U,
@@ -347,6 +390,7 @@ def benchmark_method(method: MethodSpec, size: int) -> dict:
         "elapsed_compute_median_seconds": float(statistics.median(timings)),
         "elapsed_compute_mean_seconds": float(statistics.mean(timings)),
         "elapsed_profile_run_seconds": profile_elapsed,
+        "algorithm_peak_memory_mb": bytes_to_mb(profile.get("algorithm_peak_memory_bytes")),
         "lu_relative_error_inf": lu_error,
         "x_b_relative_error_inf": relative_error_inf(x_b, x_b_ref),
         "x_c_relative_error_inf": relative_error_inf(x_c, x_c_ref),
@@ -384,6 +428,7 @@ def write_summary_csv(path: Path, rows: list[dict]) -> None:
         "elapsed_compute_median_seconds",
         "elapsed_compute_mean_seconds",
         "elapsed_profile_run_seconds",
+        "algorithm_peak_memory_mb",
         "lu_relative_error_inf",
         "x_b_relative_error_inf",
         "x_c_relative_error_inf",
@@ -433,6 +478,16 @@ def fmt_percent(value: float | None) -> str:
     return f"{value:.2f}%"
 
 
+def fmt_mb(value: float | None) -> str:
+    if value is None:
+        return "N/A"
+    if value >= 100:
+        return f"{value:.1f} MB"
+    if value >= 1:
+        return f"{value:.2f} MB"
+    return f"{value:.3f} MB"
+
+
 def render_runtime_cell(row: dict | None) -> str:
     if row is None or row["status"] != "measured":
         reason = row.get("skip_reason", "No data.") if row else "No data."
@@ -453,6 +508,21 @@ def render_runtime_cell(row: dict | None) -> str:
         f'<div class="metric-card" style="--metric-ink:{color}; --metric-soft:{soft};">'
         f"<strong>{fmt_seconds(row['elapsed_compute_median_seconds'])}</strong>"
         f"{detail_html}"
+        "</div>"
+        "</td>"
+    )
+
+
+def render_memory_cell(row: dict | None) -> str:
+    if row is None or row["status"] != "measured":
+        return '<td><div class="skip-card compact"><strong>Skipped</strong></div></td>'
+
+    color, soft = method_colors(row["method"])
+    return (
+        "<td>"
+        f'<div class="metric-card compact" style="--metric-ink:{color}; --metric-soft:{soft};">'
+        f"<strong>{fmt_mb(row.get('algorithm_peak_memory_mb'))}</strong>"
+        f"<span>{html.escape(str(row.get('storage_model', '')))}</span>"
         "</div>"
         "</td>"
     )
@@ -499,6 +569,7 @@ def build_html(rows: list[dict], output_path: Path, summary_path: Path) -> None:
     method_names = {method.slug: method.display_name for method in METHODS}
 
     runtime_rows_html: list[str] = []
+    memory_rows_html: list[str] = []
     accuracy_rows_html: list[str] = []
     coverage_rows_html: list[str] = []
 
@@ -508,6 +579,12 @@ def build_html(rows: list[dict], output_path: Path, summary_path: Path) -> None:
             "<tr>"
             f'<td><span class="size-pill">{size} x {size}</span></td>'
             + "".join(render_runtime_cell(group.get(slug)) for slug in method_order)
+            + "</tr>"
+        )
+        memory_rows_html.append(
+            "<tr>"
+            f'<td><span class="size-pill">{size} x {size}</span></td>'
+            + "".join(render_memory_cell(group.get(slug)) for slug in method_order)
             + "</tr>"
         )
         accuracy_rows_html.append(
@@ -847,6 +924,28 @@ def build_html(rows: list[dict], output_path: Path, summary_path: Path) -> None:
           </thead>
           <tbody>
             {''.join(accuracy_rows_html)}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Algorithm Memory Snapshot</h2>
+      <p>Tabel ini menampilkan estimasi peak memory inti yang dipakai algoritma, bukan RSS total proses Python. Angka dihitung dari struktur data utama yang benar-benar dipegang metode saat factorization dan solve berjalan, sehingga lebih cocok untuk membandingkan Thomas dengan metode dense umum.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Ukuran</th>
+              <th>Thomas Algorithm</th>
+              <th>Block LU CPU</th>
+              <th>Block LU GPU</th>
+              <th>LU Doolittle</th>
+              <th>LU Gaussian Elimination</th>
+            </tr>
+          </thead>
+          <tbody>
+            {''.join(memory_rows_html)}
           </tbody>
         </table>
       </div>
