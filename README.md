@@ -28,18 +28,18 @@ For a special banded system such as the tridiagonal matrices used in the benchma
 
 The report and HTML dashboard contain the full discussion, but the tables below are the shortest GitHub-visible summary for the tridiagonal benchmark up to `512 x 512`.
 
-Important note: the memory numbers below use **peak algorithm memory**, not process RSS. In other words, they estimate the core arrays actually held by the method during factorization and solve, which is the right lens for comparing Thomas against dense Block LU.
+Important note: the memory numbers below use **peak algorithm memory**, not process RSS. They now come from a runtime tracker that follows the actual arrays held by each method during factorization and solve, which is the right lens for comparing Thomas against dense Block LU.
 
 ### Runtime and Algorithm Memory
 
 | Size | Block LU backend | Block LU time (ms) | Thomas time (ms) | Block LU algo peak mem (MB) | Thomas algo peak mem (MB) |
 | --- | --- | ---: | ---: | ---: | ---: |
-| 8 x 8 | CPU | 0.2944 | 0.0756 | 0.0028 | 0.0007 |
-| 16 x 16 | CPU | 0.6092 | 0.1500 | 0.0095 | 0.0014 |
-| 32 x 32 | CPU | 1.3113 | 0.2959 | 0.0347 | 0.0029 |
-| 128 x 128 | CPU | 4.8423 | 1.1687 | 0.5215 | 0.0117 |
-| 256 x 256 | CPU | 11.2256 | 2.3781 | 2.0430 | 0.0234 |
-| 512 x 512 | CPU + GPU | 21.5605 | 5.3477 | 14.2813 | 0.0468 |
+| 8 x 8 | CPU | 0.2944 | 0.0756 | 0.0022 | 0.0006 |
+| 16 x 16 | CPU | 0.6092 | 0.1500 | 0.0083 | 0.0012 |
+| 32 x 32 | CPU | 1.3113 | 0.2959 | 0.0322 | 0.0024 |
+| 128 x 128 | CPU | 4.8423 | 1.1687 | 0.5039 | 0.0097 |
+| 256 x 256 | CPU | 11.2256 | 2.3781 | 2.0078 | 0.0195 |
+| 512 x 512 | CPU + GPU | 21.5605 | 5.3477 | 8.0078 | 0.0390 |
 
 This is the clearest reason Thomas dominates on the tridiagonal benchmark: its runtime is lower, and its memory stays genuinely linear instead of inheriting the dense working-set cost of Block LU.
 
@@ -73,7 +73,9 @@ For the GPU-assisted Block LU path, device activity is visible at `512 x 512`, b
 
 - HTML dashboard: [website_perbandingan_tridiagonal_dengan_thomas.html](hasil_tridiagonal_html_dengan_thomas/website_perbandingan_tridiagonal_dengan_thomas.html)
 - Summary CSV: [ringkasan.csv](hasil_tridiagonal_html_dengan_thomas/ringkasan.csv)
-- Latest report PDF: [laporan_algoritma_block_lu_thomas_professor_tone_final_v26.pdf](hasil_tridiagonal_html_dengan_thomas/laporan_algoritma_block_lu_thomas_professor_tone_final_v26.pdf)
+- Latest combined report PDF: [laporan_gabungan_technical_reports_v24.pdf](hasil_tridiagonal_html_dengan_thomas/laporan_gabungan_technical_reports_v24.pdf)
+
+The benchmark results used as the numerical solution summary in this project are recorded explicitly in [ringkasan.csv](hasil_tridiagonal_html_dengan_thomas/ringkasan.csv). If you want the per-size final outputs first, that is the file to open.
 
 ## High-Level Findings
 
