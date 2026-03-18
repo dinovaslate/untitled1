@@ -1,90 +1,160 @@
 # Banded Linear System Experiments
 
-This repository contains implementations and experiments for solving banded linear systems, with two main viewpoints:
+Repository ini berisi implementasi dan eksperimen untuk dua pendekatan pada sistem linear banded:
 
-- `Block LU` as a general-purpose method for banded systems that do not have a simple specialized solver.
-- `Thomas algorithm` as the specialized solver for tridiagonal systems.
+- `Block LU` sebagai metode umum untuk banded system yang belum mempunyai solver compact yang sederhana.
+- `Thomas 4-Diagonal` sebagai solver khusus untuk matriks dengan lower bandwidth `p = 1` dan upper bandwidth `q = 2`.
 
-The current codebase includes CPU and GPU variants of Block LU, benchmark scripts, generated tridiagonal datasets, and a report-oriented workflow used to compare numerical accuracy, runtime, and resource usage.
+Pada revisi terakhir, eksperimen utama untuk `Soal 1` tidak lagi memakai data tridiagonal sintetis. Seluruh angka utama sekarang berasal langsung dari matriks yang diberikan pada folder `ukuran 8 x 8` sampai `ukuran 512 x 512`.
 
-## Main Files
+## File Utama
 
-- `block_lu_cpu.py`: Block LU factorization on CPU.
-- `block_lu_gpu.py`: Block LU factorization with GPU-assisted solves and Schur complement updates.
-- `thomas_algorithm.py`: Thomas algorithm for tridiagonal systems.
-- `benchmark_tridiagonal_html.py`: tridiagonal benchmark pipeline and HTML output generation.
-- `benchmark_lu_cpu_variants.py`: CPU-side comparison between Block LU, Doolittle, and Gaussian elimination.
-- `generate_tridiagonal_datasets.py`: generator for large tridiagonal test matrices.
+- `block_lu_cpu.py`: Block LU pada CPU.
+- `block_lu_gpu.py`: Block LU dengan bantuan GPU pada triangular solve dan Schur complement.
+- `thomas_algorithm.py`: solver Thomas 4-diagonal untuk matriks dengan `p = 1`, `q = 2`.
+- `algorithm_memory.py`: tracker peak core memory dari array-array algoritma yang benar-benar hidup.
+- `benchmark_banded4_given_data.py`: benchmark utama pada data asli `8 x 8` sampai `512 x 512`.
+- `generate_hasil_lu.py`: runner Block LU untuk menghasilkan artefak LU, solusi, dan metrik per ukuran.
 
-## Project Direction
+## Ringkasan Hasil Utama
 
-The experiments in this repository separate two cases that should not be mixed.
+Eksperimen utama ada di folder [hasil_banded4_aktual](hasil_banded4_aktual). Ringkasan numerik dan solusi yang direferensikan laporan ada di:
 
-For a general banded system, Block LU is still a reasonable fallback because it does not rely on tridiagonal-specific structure. In this implementation, the blocked organization is used to improve locality and to make the expensive trailing update more efficient than a naive non-blocked LU path.
+- [ringkasan.csv](hasil_banded4_aktual/ringkasan.csv)
+- [ringkasan.json](hasil_banded4_aktual/ringkasan.json)
+- [website_perbandingan_banded4_aktual.html](hasil_banded4_aktual/website_perbandingan_banded4_aktual.html)
 
-For a special banded system such as the tridiagonal matrices used in the benchmark, Thomas algorithm is the right tool. It works directly on compact 1D bands, which is why its runtime and memory footprint are much smaller than Block LU on the same structured input.
+Jika ingin langsung melihat rekap solusi, buka [ringkasan.csv](hasil_banded4_aktual/ringkasan.csv). File itu adalah sumber utama yang dipakai untuk tabel eksperimen pada laporan.
 
-## GitHub-Friendly Tables
+### Runtime dan Peak Algorithm Memory
 
-The report and HTML dashboard contain the full discussion, but the tables below are the shortest GitHub-visible summary for the tridiagonal benchmark up to `512 x 512`.
-
-Important note: the memory numbers below use **peak algorithm memory**, not process RSS. They now come from a runtime tracker that follows the actual arrays held by each method during factorization and solve, which is the right lens for comparing Thomas against dense Block LU.
-
-### Runtime and Algorithm Memory
-
-| Size | Block LU backend | Block LU time (ms) | Thomas time (ms) | Block LU algo peak mem (MB) | Thomas algo peak mem (MB) |
+| Size | Block LU backend | Block LU time (ms) | Thomas 4-diagonal time (ms) | Block LU algo peak mem (MB) | Thomas 4-diagonal algo peak mem (MB) |
 | --- | --- | ---: | ---: | ---: | ---: |
-| 8 x 8 | CPU | 0.2944 | 0.0756 | 0.0022 | 0.0006 |
-| 16 x 16 | CPU | 0.6092 | 0.1500 | 0.0083 | 0.0012 |
-| 32 x 32 | CPU | 1.3113 | 0.2959 | 0.0322 | 0.0024 |
-| 128 x 128 | CPU | 4.8423 | 1.1687 | 0.5039 | 0.0097 |
-| 256 x 256 | CPU | 11.2256 | 2.3781 | 2.0078 | 0.0195 |
-| 512 x 512 | CPU + GPU | 21.5605 | 5.3477 | 8.0078 | 0.0390 |
+| 8 x 8 | CPU | 0.7914 | 0.3704 | 0.0022 | 0.0007 |
+| 16 x 16 | CPU | 1.3629 | 0.4600 | 0.0083 | 0.0014 |
+| 32 x 32 | CPU | 2.5960 | 0.6577 | 0.0322 | 0.0029 |
+| 128 x 128 | CPU | 7.9704 | 1.8462 | 0.5039 | 0.0117 |
+| 256 x 256 | CPU | 17.9436 | 3.4204 | 2.0078 | 0.0234 |
+| 512 x 512 | CPU + GPU | 36.6547 | 6.6125 | 8.0156 | 0.0468 |
 
-This is the clearest reason Thomas dominates on the tridiagonal benchmark: its runtime is lower, and its memory stays genuinely linear instead of inheriting the dense working-set cost of Block LU.
+Polanya jelas: pada matriks asli dengan `p = 1` dan `q = 2`, solver 4-diagonal selalu lebih cepat daripada Block LU, dan okupasi memorinya tetap linear.
 
 ### Accuracy Snapshot
 
-| Size | Block LU LU err | Thomas LU err | Block LU `x_b` err | Thomas `x_b` err |
-| --- | ---: | ---: | ---: | ---: |
-| 8 x 8 | 1.850e-17 | 1.850e-17 | 0.000e+00 | 0.000e+00 |
-| 16 x 16 | 1.850e-17 | 1.850e-17 | 1.110e-16 | 1.110e-16 |
-| 32 x 32 | 1.850e-17 | 1.850e-17 | 1.110e-16 | 1.110e-16 |
-| 128 x 128 | 1.850e-17 | 1.850e-17 | 1.110e-16 | 1.110e-16 |
-| 256 x 256 | 1.850e-17 | 1.850e-17 | 1.110e-16 | 1.110e-16 |
-| 512 x 512 | 1.850e-17 | 1.850e-17 | 2.220e-16 | 1.110e-16 |
+| Size | Block LU LU err | Thomas LU err | Block LU `x_b` err | Thomas `x_b` err | Block LU `x_c` err | Thomas `x_c` err |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 8 x 8 | 1.468e-16 | 1.468e-16 | 1.117e-15 | 9.930e-16 | 7.563e-16 | 3.781e-16 |
+| 16 x 16 | 8.436e-17 | 8.436e-17 | 3.244e-16 | 2.595e-16 | 2.451e-16 | 1.838e-16 |
+| 32 x 32 | 4.696e-16 | 4.696e-16 | 1.789e-15 | 1.715e-15 | 2.026e-15 | 1.075e-15 |
+| 128 x 128 | 2.786e-15 | 2.786e-15 | 2.196e-15 | 3.675e-14 | 7.328e-15 | 8.200e-15 |
+| 256 x 256 | 3.528e-22 | 3.528e-22 | 3.328e-14 | 3.790e-14 | 3.637e-14 | 7.092e-14 |
+| 512 x 512 | 8.427e-15 | 8.427e-15 | 2.219e-15 | 2.358e-15 | 2.614e-15 | 2.365e-15 |
 
-The important point is that the speedup is not coming from a numerical compromise. Thomas remains at the same very small error scale while being substantially cheaper.
+Error tetap kecil pada kedua metode. Pada ukuran `128` dan `256`, error solusi naik ke orde `1e-14`, yang konsisten dengan condition number data asli yang memang membesar tajam pada ukuran tersebut.
 
 ### Resource Snapshot
 
 | Size | Block LU backend | Block LU CPU avg (%) | Thomas CPU avg (%) | Block LU GPU peak (%) | Thomas GPU peak (%) |
 | --- | --- | ---: | ---: | ---: | ---: |
-| 8 x 8 | CPU | 6.39 | 5.67 | 0 | 0 |
-| 16 x 16 | CPU | 6.15 | 6.86 | 0 | 0 |
-| 32 x 32 | CPU | 6.32 | 6.23 | 0 | 0 |
-| 128 x 128 | CPU | 5.66 | 5.70 | 0 | 0 |
-| 256 x 256 | CPU | 5.26 | 5.08 | 0 | 0 |
-| 512 x 512 | CPU + GPU | 4.49 | 5.11 | 36 | 0 |
+| 8 x 8 | CPU | 6.55 | 5.52 | 0 | 0 |
+| 16 x 16 | CPU | 5.53 | 5.25 | 0 | 0 |
+| 32 x 32 | CPU | 5.67 | 6.15 | 0 | 0 |
+| 128 x 128 | CPU | 5.83 | 5.35 | 0 | 0 |
+| 256 x 256 | CPU | 10.21 | 5.25 | 0 | 0 |
+| 512 x 512 | CPU + GPU | 4.14 | 6.50 | 35 | 0 |
 
-For the GPU-assisted Block LU path, device activity is visible at `512 x 512`, but the problem is still too small for that overhead to beat a compact tridiagonal solver.
+Untuk `512 x 512`, Block LU memang mulai memakai GPU, tetapi ukuran masalah masih terlalu kecil untuk menutup overhead jalur dense umum.
 
-### Full Artifacts
+## Cara Menjalankan
 
-- HTML dashboard: [website_perbandingan_tridiagonal_dengan_thomas.html](hasil_tridiagonal_html_dengan_thomas/website_perbandingan_tridiagonal_dengan_thomas.html)
-- Summary CSV: [ringkasan.csv](hasil_tridiagonal_html_dengan_thomas/ringkasan.csv)
-- Latest combined report PDF: [laporan_gabungan_technical_reports_v24.pdf](hasil_tridiagonal_html_dengan_thomas/laporan_gabungan_technical_reports_v24.pdf)
+Gunakan Python `3.10+`.
 
-The benchmark results used as the numerical solution summary in this project are recorded explicitly in [ringkasan.csv](hasil_tridiagonal_html_dengan_thomas/ringkasan.csv). If you want the per-size final outputs first, that is the file to open.
+### CPU only
 
-## High-Level Findings
+```powershell
+python -m venv .venv
+.venv\Scripts\activate
+pip install numpy pandas psutil
+```
 
-- For tridiagonal systems, Thomas algorithm is the preferred solver because it has `O(n)` time and `O(n)` memory complexity.
-- Block LU remains relevant as a more general method for banded systems that cannot be reduced to Thomas or a close variant.
-- In the current implementation, Block LU uses CPU only for `n < 512` and switches to CPU + GPU assistance for `n >= 512`.
-- The practical performance story is dominated by structure and locality, not just by raw FLOP counts.
+### GPU di Windows
 
-## Repository Notes
+1. Pastikan driver NVIDIA aktif:
 
-- The repository contains generated experiment artifacts and report drafts produced during the study.
-- The tridiagonal benchmark tables in this README are mirrored by the generated HTML dashboard and summary CSV in `hasil_tridiagonal_html_dengan_thomas/`.
+```powershell
+nvidia-smi
+```
+
+2. Install `CUDA Toolkit 12.x`.
+3. Buka PowerShell baru lalu verifikasi:
+
+```powershell
+$env:CUDA_PATH
+where.exe nvcc
+Get-ChildItem "$env:CUDA_PATH\bin\nvrtc64_*.dll"
+```
+
+4. Install dependensi Python:
+
+```powershell
+python -m venv .venv
+.venv\Scripts\activate
+pip install numpy pandas psutil
+pip install cupy-cuda12x
+```
+
+5. Verifikasi CuPy:
+
+```powershell
+python -c "import cupy as cp; print(cp.cuda.runtime.getDeviceProperties(0)['name'].decode()); x=cp.arange(10); print(int(x.sum().get()))"
+```
+
+Sebagai fallback, CuPy juga bisa memasang komponen CUDA lewat:
+
+```powershell
+pip install "cupy-cuda12x[ctk]"
+```
+
+### Menjalankan benchmark utama pada data asli
+
+```powershell
+python benchmark_banded4_given_data.py --input-root . --output-root hasil_banded4_aktual
+```
+
+Script ini akan menghasilkan:
+
+- `hasil_banded4_aktual/ringkasan.csv`
+- `hasil_banded4_aktual/ringkasan.json`
+- `hasil_banded4_aktual/ringkasan_detail.json`
+- `hasil_banded4_aktual/website_perbandingan_banded4_aktual.html`
+- `hasil_banded4_aktual/solusi/*.txt`
+
+File solusi per ukuran disimpan eksplisit pada `hasil_banded4_aktual/solusi/`, misalnya:
+
+- `block_lu_x_b_512x512.txt`
+- `block_lu_x_c_512x512.txt`
+- `thomas4_x_b_512x512.txt`
+- `thomas4_x_c_512x512.txt`
+
+### Menjalankan Block LU saja pada data yang diberikan
+
+```powershell
+python generate_hasil_lu.py --input-root . --output-root hasil_block_lu --backend auto --sizes 8 16 32 128 256 512
+```
+
+## Catatan
+
+- `Block LU` di repo ini masih bekerja dengan matriks kerja dense, jadi kompleksitas waktunya tetap `O(n^3)` dan memorinya `O(n^2)`.
+- `Thomas 4-diagonal` bekerja langsung pada empat pita 1D, jadi kompleksitas waktunya `O(n)` dan memorinya `O(n)`.
+- Angka memory yang dilaporkan pada benchmark utama adalah **peak core memory**, yaitu peak dari buffer array algoritma yang hidup saat factorization dan solve, bukan sekadar RSS proses.
+
+## Laporan
+
+Laporan gabungan terakhir yang memuat pembaruan eksperimen ini ada di:
+
+- [laporan_gabungan_technical_reports_v25.pdf](hasil_tridiagonal_html_dengan_thomas/laporan_gabungan_technical_reports_v25.pdf)
+
+## Referensi Instalasi Resmi
+
+- CuPy installation guide: `https://docs.cupy.dev/en/stable/install.html`
+- NVIDIA CUDA Installation Guide for Microsoft Windows: `https://docs.nvidia.com/cuda/cuda-installation-guide-microsoft-windows/`
